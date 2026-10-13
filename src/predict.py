@@ -64,6 +64,38 @@ class SentimentPredictor:
         if model_path:
             self.load_model(model_path)
     
+    @staticmethod
+    def _readable_label(label, classes=None):
+        """Convert common binary and three-class sentiment labels to names."""
+        if isinstance(label, str):
+            value = label.strip().lower()
+            aliases = {
+                "pos": "positive", "positive": "positive",
+                "neg": "negative", "negative": "negative",
+                "neu": "neutral", "neutral": "neutral",
+            }
+            return aliases.get(value, value)
+
+        if isinstance(label, (int, float, np.integer, np.floating)):
+            class_values = set(classes) if classes is not None else set()
+            if class_values == {0, 1}:
+                return "positive" if label == 1 else "negative"
+            if class_values == {0, 1, 2}:
+                return {0: "negative", 1: "neutral", 2: "positive"}.get(label, str(label))
+            if class_values == {0, 2, 4}:
+                return {0: "negative", 2: "neutral", 4: "positive"}.get(label, str(label))
+            if class_values == {-1, 0, 1}:
+                return {-1: "negative", 0: "neutral", 1: "positive"}.get(label, str(label))
+        return str(label)
+
+    @classmethod
+    def _readable_confidences(cls, classes, probabilities):
+        """Return probabilities keyed by readable sentiment labels."""
+        return {
+            cls._readable_label(label, classes): float(probability)
+            for label, probability in zip(classes, probabilities)
+        }
+
     def load_model(self, model_path: str):
         """
         Load a trained model from file.
@@ -131,21 +163,15 @@ class SentimentPredictor:
         # Make prediction
         prediction = self.model.predict([cleaned_text])[0]
         
-        # Convert numeric predictions to readable labels
-        if isinstance(prediction, (int, float)):
-            sentiment = 'positive' if prediction == 1 else 'negative'
-        else:
-            sentiment = str(prediction)
+        # Preserve the model's class labels, including neutral when trained.
+        sentiment = self._readable_label(prediction, getattr(self.model, "classes_", None))
         
         if return_confidence and hasattr(self.model, 'predict_proba'):
             # Get confidence scores
             probabilities = self.model.predict_proba([cleaned_text])[0]
             classes = self.model.classes_
             
-            confidence_dict = {}
-            for i, class_name in enumerate(classes):
-                readable_name = 'positive' if (isinstance(class_name, (int, float)) and class_name == 1) or class_name == 'pos' else 'negative'
-                confidence_dict[readable_name] = probabilities[i]
+            confidence_dict = self._readable_confidences(classes, probabilities)
             
             return confidence_dict
         
@@ -186,27 +212,22 @@ class SentimentPredictor:
         # Make predictions
         predictions = self.model.predict(cleaned_texts)
         
-        # Convert to readable format
-        results = []
-        for prediction in predictions:
-            if isinstance(prediction, (int, float)):
-                sentiment = 'positive' if prediction == 1 else 'negative'
-            else:
-                sentiment = str(prediction)
-            results.append(sentiment)
+        # Convert labels using the model's complete class set.
+        classes = getattr(self.model, "classes_", None)
+        results = [
+            self._readable_label(prediction, classes)
+            for prediction in predictions
+        ]
         
         if return_confidence and hasattr(self.model, 'predict_proba'):
             # Get confidence scores
             probabilities = self.model.predict_proba(cleaned_texts)
             classes = self.model.classes_
             
-            confidence_results = []
-            for prob in probabilities:
-                confidence_dict = {}
-                for i, class_name in enumerate(classes):
-                    readable_name = 'positive' if (isinstance(class_name, (int, float)) and class_name == 1) or class_name == 'pos' else 'negative'
-                    confidence_dict[readable_name] = prob[i]
-                confidence_results.append(confidence_dict)
+            confidence_results = [
+                self._readable_confidences(classes, prob)
+                for prob in probabilities
+            ]
             
             return confidence_results
         
@@ -270,15 +291,25 @@ class SentimentPredictor:
         if return_confidence:
             predictions = self.predict_batch(texts, return_confidence=True)
             
-            # Add confidence scores to dataframe
-            positive_confidence = [pred.get('positive', 0) for pred in predictions]
-            negative_confidence = [pred.get('negative', 0) for pred in predictions]
-            
-            df['sentiment'] = ['positive' if pos > neg else 'negative' 
-                              for pos, neg in zip(positive_confidence, negative_confidence)]
-            df['confidence_positive'] = positive_confidence
-            df['confidence_negative'] = negative_confidence
-            df['confidence'] = [max(pos, neg) for pos, neg in zip(positive_confidence, negative_confidence)]
+            # Preserve all model classes, including neutral, in CSV output.
+            if predictions and all(isinstance(pred, dict) for pred in predictions):
+                labels = sorted({label for pred in predictions for label in pred})
+                df['sentiment'] = [
+                    max(pred, key=pred.get) if pred else 'unknown'
+                    for pred in predictions
+                ]
+
+                for label in labels:
+                    df[f'confidence_{label}'] = [
+                        pred.get(label, 0.0) for pred in predictions
+                    ]
+
+                df['confidence'] = [
+                    max(pred.values(), default=0.0) for pred in predictions
+                ]
+            else:
+                # Models without predict_proba return labels, not confidence dictionaries.
+                df['sentiment'] = predictions
         else:
             predictions = self.predict_batch(texts, return_confidence=False)
             df['sentiment'] = predictions

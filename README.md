@@ -236,3 +236,41 @@ Data Science Student | Atharva College, Malad, Mumbai
 ***
 
 **Ready to analyze sentiment in multiple languages!** 🌍🎉
+
+## Three-Class Sentiment Prediction
+
+The prediction API converts supported model class labels into readable sentiment
+names. This helps preserve negative, neutral, and positive predictions when the
+model has been trained with those classes.
+
+Supported numeric mappings are:
+
+| Model classes | Negative | Neutral | Positive |
+|---|---:|---:|---:|
+| `0, 1` | `0` | Not present | `1` |
+| `0, 1, 2` | `0` | `1` | `2` |
+| `0, 2, 4` | `0` | `2` | `4` |
+| `-1, 0, 1` | `-1` | `0` | `1` |
+
+String labels such as `neg`, `neu`, and `pos` are also normalized. Numeric
+labels outside these recognized class sets are preserved as strings rather
+than guessed. The model must actually be trained to predict a neutral class;
+label formatting alone does not create neutral-prediction capability.
+
+When probability estimates are available, single-text and batch prediction
+return confidence values keyed by the readable sentiment labels. CSV prediction
+also includes per-class confidence columns and the maximum confidence value.
+Models without probability estimates return sentiment predictions without
+fabricated confidence scores.
+
+### Run the tests
+
+Install development dependencies and run the focused tests:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q --confcutdir=tests tests/test_predict_labels.py
+```
+
+The tests cover supported label mappings, confidence dictionaries, and CSV
+prediction output.
